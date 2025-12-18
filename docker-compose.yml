@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # --- CONEXIÓN SEGURA (CLOUDFLARE TUNNEL) ---
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared_tunnel
+    restart: always
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - chat-network
+
+  # --- AUTOMATIZACIÓN (n8n) ---
+  n8n:
+    image: n8n_io/n8n
+    container_name: n8n
+    restart: always
+    environment:
+      - N8N_HOST=${DOMAIN_N8N}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://${DOMAIN_N8N}/
+      - GENERIC_TIMEZONE=America/Mexico_City
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - chat-network
+
+  # --- WHATICKET (DB & CACHE) ---
+  db_whaticket:
+    image: postgres
+    container_name: whaticket_db
+    restart: always
+    volumes:
+      - whaticket_db_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_DB: ${DB_NAME}
+    networks:
+      - chat-network
+
+  redis:
+    image: redis:alpine
+    container_name: whaticket_redis
+    restart: always
+    networks:
+      - chat-network
+
+  # --- WHATICKET (APP) ---
+  whaticket-backend:
+    build: ./whaticket/backend
+    container_name: whaticket_backend
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - DB_DIALECT=postgres
+      - DB_HOST=db_whaticket
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DB_NAME=${DB_NAME}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - FRONTEND_URL=https://${DOMAIN_CHAT}
+      - BACKEND_URL=https://${DOMAIN_API}
+    networks:
+      - chat-network
+    depends_on:
+      - db_whaticket
+      - redis
+
+  whaticket-frontend:
+    build:
+      context: ./whaticket/frontend
+      args:
+        - REACT_APP_BACKEND_URL=https://${DOMAIN_API}
+    container_name: whaticket_frontend
+    restart: always
+    networks:
+      - chat-network
+
+volumes:
+  n8n_data:
+  whaticket_db_data:
+
+
+networks:
+  chat-network:
+    driver: bridge
